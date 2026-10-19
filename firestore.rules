@@ -1,0 +1,68 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /ideaboard_sticky_notes/{noteId} {
+      // 1. Worldwide Public Read: anyone can view ideas on the campus vision board
+      allow read: if true;
+      
+      // 2. Note Creation: authenticated visitors (anonymous auth counts)
+      // Enforces author ownership, matching document ID, and strict schema validation
+      allow create: if request.auth != null
+                    && isValidNote(request.resource.data)
+                    && request.resource.data.id == noteId
+                    && request.resource.data.authorUid == request.auth.uid;
+                    
+      // 3. Note Updates (Dragging, Upvoting, Reaction Stamps):
+      // Anti-Defacement Protection: idea text, author name, category, color, and creation time are IMMUTABLE.
+      // No visitor can deface or edit another user's sticky note!
+      allow update: if request.auth != null
+                    && isValidUpdate(request.resource.data, resource.data);
+                    
+      // 4. Note Deletion: Only the original creator can wipe their own sticky note
+      allow delete: if request.auth != null
+                    && resource.data.authorUid == request.auth.uid;
+    }
+
+    function isValidNote(data) {
+      return data.keys().hasAll(['id', 'classroom', 'category', 'color', 'idea', 'author', 'authorUid', 'createdAt'])
+        && data.keys().hasOnly(['id', 'classroom', 'category', 'color', 'idea', 'author', 'authorUid', 'pocType', 'pocValue', 'likes', 'reactions', 'x', 'y', 'rotation', 'createdAt'])
+        && data.id is string && data.id.size() >= 5 && data.id.size() <= 64
+        && data.classroom in ['global', 'india', 'na', 'east_asia', 'europe', 'latam']
+        && data.category in ['startup', 'product', 'travel', 'party', 'creative', 'random']
+        && data.color in ['yellow', 'pink', 'blue', 'mint', 'purple', 'peach']
+        && data.idea is string && data.idea.size() >= 1 && data.idea.size() <= 320
+        && data.author is string && data.author.size() >= 1 && data.author.size() <= 50
+        && data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128
+        && (data.pocType == null || (data.pocType is string && data.pocType.size() <= 30))
+        && (data.pocValue == null || (data.pocValue is string && data.pocValue.size() <= 80))
+        && data.x is number && data.x >= 0 && data.x <= 3000
+        && data.y is number && data.y >= 0 && data.y <= 2000
+        && (data.rotation == null || (data.rotation is number && data.rotation >= -45 && data.rotation <= 45))
+        && (data.likes == null || (data.likes is number && data.likes >= 0 && data.likes <= 1000))
+        && (data.reactions == null || data.reactions is map)
+        && data.createdAt is number;
+    }
+
+    function isValidUpdate(incoming, current) {
+      // Immutability safeguards: prevents defacement of ideas, authors, or timestamps
+      return incoming.id == current.id
+        && incoming.createdAt == current.createdAt
+        && incoming.classroom == current.classroom
+        && incoming.author == current.author
+        && incoming.authorUid == current.authorUid
+        && incoming.idea == current.idea
+        && incoming.category == current.category
+        && incoming.color == current.color
+        && incoming.pocType == current.pocType
+        && incoming.pocValue == current.pocValue
+        // Position coordinates can be moved within board bounds
+        && incoming.x is number && incoming.x >= 0 && incoming.x <= 3000
+        && incoming.y is number && incoming.y >= 0 && incoming.y <= 2000
+        // Pins/likes can only increment reasonably (max +2 per write)
+        && incoming.likes >= current.likes
+        && incoming.likes <= current.likes + 2
+        // Reactions must remain a map structure
+        && (incoming.reactions == null || incoming.reactions is map);
+    }
+  }
+}
