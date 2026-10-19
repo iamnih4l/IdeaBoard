@@ -5,22 +5,20 @@ service cloud.firestore {
       // 1. Worldwide Public Read: anyone can view ideas on the campus vision board
       allow read: if true;
       
-      // 2. Note Creation: authenticated visitors (anonymous auth counts)
-      // Enforces author ownership, matching document ID, and strict schema validation
-      allow create: if request.auth != null
-                    && isValidNote(request.resource.data)
+      // 2. Note Creation: authenticated visitors (anonymous auth counts) or guest visitors
+      // Enforces matching document ID and strict schema validation
+      allow create: if isValidNote(request.resource.data)
                     && request.resource.data.id == noteId
-                    && request.resource.data.authorUid == request.auth.uid;
+                    && (request.auth == null || request.resource.data.authorUid == request.auth.uid);
                     
-      // 3. Note Updates (Dragging, Upvoting, Reaction Stamps):
+      // 3. Note Updates (Dragging, Upvoting/Pinning, Reaction Stamps):
       // Anti-Defacement Protection: idea text, author name, category, color, and creation time are IMMUTABLE.
       // No visitor can deface or edit another user's sticky note!
-      allow update: if request.auth != null
-                    && isValidUpdate(request.resource.data, resource.data);
+      allow update: if isValidUpdate(request.resource.data, resource.data);
                     
       // 4. Note Deletion: Only the original creator can wipe their own sticky note
-      allow delete: if request.auth != null
-                    && resource.data.authorUid == request.auth.uid;
+      allow delete: if (request.auth != null && resource.data.authorUid == request.auth.uid)
+                    || (request.auth == null && resource.data.authorUid == request.resource.data.authorUid);
     }
 
     function isValidNote(data) {
@@ -38,7 +36,7 @@ service cloud.firestore {
         && data.x is number && data.x >= 0 && data.x <= 3000
         && data.y is number && data.y >= 0 && data.y <= 2000
         && (data.rotation == null || (data.rotation is number && data.rotation >= -45 && data.rotation <= 45))
-        && (data.likes == null || (data.likes is number && data.likes >= 0 && data.likes <= 1000))
+        && (data.likes == null || (data.likes is number && data.likes >= 0 && data.likes <= 5000))
         && (data.reactions == null || data.reactions is map)
         && data.createdAt is number;
     }
@@ -58,9 +56,8 @@ service cloud.firestore {
         // Position coordinates can be moved within board bounds
         && incoming.x is number && incoming.x >= 0 && incoming.x <= 3000
         && incoming.y is number && incoming.y >= 0 && incoming.y <= 2000
-        // Pins/likes can only increment reasonably (max +2 per write)
-        && incoming.likes >= current.likes
-        && incoming.likes <= current.likes + 2
+        // Pins/likes can change reasonably (+2 for pin or -1 for unpin)
+        && (incoming.likes == null || (incoming.likes >= current.likes - 1 && incoming.likes <= current.likes + 2))
         // Reactions must remain a map structure
         && (incoming.reactions == null || incoming.reactions is map);
     }
